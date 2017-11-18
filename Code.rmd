@@ -1,0 +1,513 @@
+---
+title: "Predicting Price for Airbnb Listings in New York City"
+author: "Isabelle Fitzpatrick, Erina Fukuda & Subashini Sridhar"
+output: html_document
+---
+```{r,warning=FALSE,message=FALSE}
+library(mosaic)
+library(dplyr)
+library(stringr)
+library(MASS)
+library(tree)
+library(gbm)
+library(leaps)
+library(rpart)
+library(rpart.plot)
+library(car)
+library(readr) 
+listings_NYC <- read_csv("~/Smith/Fall2016/SDS291/listings_edit.csv")
+```
+##Abstract
+This paper examines data on Airbnb listings, specifically looking at a dataset taken from New York City in 2015 (N = 40,000). We wanted to determine how much to charge for an Airbnb listing, thus we evaluated seventeen predictors that describe a listing of which fifteen were deemed to be significant in our stepwise regression and backwards elimination models. As these models were hard to interpret, we referred instead to a regression decision tree which narrowed down our strongest predictors for price to be room type, neighborhood, number of bathrooms, and number of bedrooms. By taking the log of price, we came up with an improved linear model which showed that for every extra bedroom, the price goes up by 20%, and for every extra bathroom, the price goes up by 10%, in addition to several other aspects of the model which we interpreted in our result section. Although our findings are limited by an unexplained predictor which seems to have affected the residuals plot for the testing data, our final model provides an easily interpretable approach to determine how much to charge for an Airbnb listing in the NYC area. 
+
+##Introduction
+Since  2008, Airbnb started a radical change in how people travel, suddenly creating an alternative to staying in hotels and hostels. Not only are there now more options than ever for the choosy vacationer, but thousands of people around the world have been empowered to make an income renting out their homes or spare rooms. Today, there are Airbnb listings in 34,000 cities in 190 countries, which is every country except Cuba, North Korea, Iran and Syria; and there are hundreds of thousands of people in the world renting out airbnb listings on a peak night. The popularity of this business concept has created a sharing economy which allows anyone with property to become a microentrepreneur. 
+
+Our research delves into what influences predicting the price of an Airbnb listing which can range from around $10 to thousands of dollars within the same city. We looked specifically at New York City, an international hub ripe with AirBnB listings for every kind of traveller, varying from a shared room for the low-budget student to luxury penthouses in Manhattan fit for a celebrity. In evaluating our data set (N=40,000), we chose to examine how 17 different predictors (out of the 95 original variables) would affect price. Initially we were interested in several aspects about how the host was presented with their listing such as whether or not a host is a super host, if they have a profile picture and whether their identity is verified. We also studied a number of factors that we thought any guest would want to look into such as the neighborhood of the listing, the property type, the room type, the number of people accommodated, the number bedrooms and bathrooms, the number of amenities provided, the number of extra people permitted and the maximum and minimum number of nights. As far as other information provided with the listing to influence how much a host might feel justified to charge, we included the number of reviews, the review scores rating, the cancellation policy, and whether or not a guest profile picture is mandatory. Our intention is that our refined model will provide an easily interpretable method for an NYC property-owner to determine how much to price their Airbnb listing. 
+
+##Descriptive Statistics & Data Cleaning
+```{r, message=FALSE, warning=FALSE}
+#Select the variables from listings_NYC that we will assess
+NYC = listings_NYC %>% dplyr::select(price,host_is_superhost,host_has_profile_pic,host_identity_verified,neighbourhood_group_cleansed,property_type,room_type,accommodates,bathrooms,bedrooms,amenities,security_deposit,cleaning_fee,extra_people,maximum_nights, minimum_nights,maximum_nights,number_of_reviews,review_scores_rating,cancellation_policy,require_guest_profile_picture)
+ 
+#Change binary variables from `character` to `Factor w/ 2 levels "false=0","true=1"`
+NYC$host_is_superhost=as.factor(gsub("t", "1", fixed=TRUE,NYC$host_is_superhost))
+NYC$host_is_superhost=as.factor(gsub("f", "0", fixed=TRUE,NYC$host_is_superhost))
+NYC$host_has_profile_pic=as.factor(gsub("t", "1", fixed=TRUE,NYC$host_has_profile_pic))
+NYC$host_has_profile_pic=as.factor(gsub("f", "0", fixed=TRUE,NYC$host_has_profile_pic))
+NYC$host_identity_verified=as.factor(gsub("t", "1", fixed=TRUE,NYC$host_identity_verified))
+NYC$host_identity_verified=as.factor(gsub("f", "0", fixed=TRUE,NYC$host_identity_verified))
+NYC$require_guest_profile_picture=as.factor(gsub("t", "1", fixed=TRUE,NYC$require_guest_profile_picture))
+NYC$require_guest_profile_picture=as.factor(gsub("f", "0", fixed=TRUE,NYC$require_guest_profile_picture))
+ 
+#Change `amenities` to quantitative as counting how many amenities each listing offers
+NYC$amenities=str_count(NYC$amenities, pattern=",")
+NYC$amenities=NYC$amenities+1
+ 
+#Change variables from type "character" to "factor"
+NYC$neighbourhood_group_cleansed=as.factor(NYC$neighbourhood_group_cleansed)
+NYC$property_type=as.factor(NYC$property_type)
+NYC$room_type=as.factor(NYC$room_type)
+NYC$cancellation_policy = as.factor(NYC$cancellation_policy)
+```
+*Note: Below, we are initially running favstats() for all variables using the data in NYC dataframe to maintain consistency
+
+```{r, message=FALSE, warning=FALSE}
+tally(~host_is_superhost, data = NYC)
+```
+For host_is_superhost = 1(True) there are 2505 listings and host_is_superhost = 0(False), there are 37041 listings. There are 7 missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+tally(~host_has_profile_pic, data = NYC)
+```
+For host_has_profile_pic = 1(True) there are 39403 listings and  host_has_profile_pic = 0(False) there are 143 listings. There are 7 missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+tally(~host_identity_verified, data = NYC)
+```
+For host_identity_verified = 1(True), there are 26386 listings and  host_identity_verified = 0(False), there are 13160 listings. There are 7 missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+tally(~require_guest_profile_picture, data = NYC)
+```
+For require_guest_profile_picture = 1(True) there are 1606 listings and require_guest_profile_picture = 0(False) there are 37947 listings.  There are 0 missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+tally(~neighbourhood_group_cleansed, data = NYC)
+```
+For neighbourhood_group_cleansed = Bronx there are 593 listings, neighbourhood_group_cleansed = Brooklyn there are 16138 listings, neighbourhood_group_cleansed = Manhattan there are 19083 listings, neighbourhood_group_cleansed = Queens there are 3528 listings, neighbourhood_group_cleansed = Staten Island there are 211 listings. There are 0 missing data entries.  
+
+```{r, message=FALSE, warning=FALSE}
+tally(~property_type, data = NYC)
+```
+For property_type = Apartment there are 34336 listings property_type = Bed & Breakfast there are 194 listings, property_type = Boat there are 9 listings, property_type = Bungalow there are 35828 listings, property_type = Cabin there are 5 listings, property_type = Camper/RV there is 1 listing, property_type = Castle there are 2 listings, property_type = Cave there is 1 listings, property_type = Chalet there is 1 listing, property_type = Condominium there are 341 listings, property_type = Dorm there are 35 listings, property_type = Entire Floor there are 67 listings, property_type = Guesthouse there are 21 listings, property_type = House there are 3059 listings, property_type = Hut there are 2 listings, property_type = Lighthouse there is 1 listing, property_type = Loft there are 865 listings, property_type = Other there are 110 listings, property_type = Tent there are 10 listings, property_type = Townhouse there are 466 listings, property_type = Villa there are 18 listings. There is 1 missing data entry.
+
+```{r, message=FALSE, warning=FALSE}
+tally(~room_type, data = NYC)
+```
+For room_type = Entire home/apt there are 20306 listings, room_type = Private room there are 17885 listings, room_type = Shared room there are 1362 listings. There are 0 missing data entries.  
+
+```{r, message=FALSE, warning=FALSE}
+tally(~cancellation_policy, data = NYC)
+```
+For cancellation_policy = flexible there are 12986 listings, cancellation_policy = long_term there is 1 listing, cancellation_policy = moderate there are 9380 listings. cancellation_policy = no_refunds room there is 1 listing, cancellation_policy = strict there are 1717 listings. cancellation_policy = super_strict_30 there are 7 listings, cancellation_policy = super_strict_60 there is 1 listing. There are 0 missing data entries.  
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~bedrooms, data=NYC)
+```
+The minimum number of bedrooms is 0 and the maximum is 10. There are 59 missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~accommodates, data=NYC)
+```
+The minimum number of people accommodated is 1 and the maximum is 16 with zero missing data entries.
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~amenities, data=NYC)
+tally(~amenities, data = NYC)
+```
+The minimum number of amenities provided is 1 and the maximum number is 34. The mean number of amenities provided at a given listing is 14.  There are zero missing data entries. 
+For amenities, our original data provided us with a descriptive list of different amenities that a listing provided. We felt that it would be too complicated to look at what amenities were provided individually, we decided to turn this variable into a quantitative by counting the number of amenities provided (we counted the number of commas and added one). We understand that there may be some error in this because we are not looking at which amenities to add in (e.g. Internet and Wifi are technically the same but it can be listed twice so the listing's amenities number will be overestimated).
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~number_of_reviews, data = NYC)
+#Number of listings with 0 reviews
+count(NYC$number_of_reviews == 0)
+```
+The minimum number of reviews is 0 and the maximum number of reviews is 360. Q1 is equal to 1 and Q3 is 16. There are zero missing data entries. There are 8222 observations with 0 reviews. All of these observations also have NAs for review_scores_rating, which makes sense because if a listing has no reviews, it shouldn't have a rating also. We do not remove these two predictors from the data even though a lot of observations are missing values, since these are actually describing the nature of a listing. 
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~review_scores_rating, data = NYC)
+```
+The minimum score is 20/100 and the maximum score is 100/100. There are 9,022 missing data entries. We decided against removing the null values as for the reasons mentioned under number_of_reviews.  
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~security_deposit, data=NYC)
+boxplot(NYC$security_deposit)
+```
+
+The minimum security deposit is $85 and the maximum is $5100. Q1 is $150, Q3 is $500, and mean is $355. There are 21,436 missing data entries. We decided to remove this predictor since there were too listings with null values.
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~cleaning_fee, data=NYC)
+boxplot(NYC$cleaning_fee)
+```
+
+The minimum cleaning fee is $5 and the maximum is $700. Q1 = $25, median = $50, and Q3 = $80. There are 11,987 missing data entries; therefore, decided to remove this predictor.
+
+```{r, message=FALSE, warning=FALSE} 
+#Select the variables from NYC that we will assess, removing security_deposit and cleaning_fee as it has many observations missing.
+NYC2 = NYC %>%
+dplyr::select(price,host_is_superhost,host_has_profile_pic,host_identity_verified,neighbourhood_group_cleansed,property_type,room_type,accommodates,bathrooms,bedrooms,amenities,extra_people,maximum_nights, minimum_nights,maximum_nights,number_of_reviews,review_scores_rating,cancellation_policy,require_guest_profile_picture)
+```
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~bathrooms, data=NYC)
+#Number of listings with zero bathrooms
+count(NYC$bathrooms==0)
+```
+The minimum number of bathrooms is 0 and the maximum is 8. There are 117 listings that have zero number of bathrooms. Many of these listings are houses and apartments that accommodate at least one person, but don't have bathrooms. We decided to remove listings with zero bathrooms from the data as it would typically not make sense to rent a place without bathrooms.
+
+
+```{r, message=FALSE, warning=FALSE}
+#filter for listings with bathrooms > 0
+NYC3 <- NYC2 %>% filter(bathrooms > 0)
+```
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~minimum_nights, data=NYC)
+boxplot(NYC$minimum_nights)
+# Number of listings with minimum number of nights > 90
+count(NYC$minimum_nights>90)
+```
+
+The minimum number of nights is 1 and the maximum minimum_nights is 1250 which seems strange because that would be requiring people to stay a minimum of about three years. We decided removed any observations greater than 90 because there were only 41 observations greater than 90 (appeared to be subletters). 
+
+```{r, message=FALSE, warning=FALSE}
+#filter for observations with minimum_nights <= 90
+NYC4 <- NYC3 %>% filter(minimum_nights <=90)
+```
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~maximum_nights, data = NYC)
+boxplot(NYC$maximum_nights)
+# Number of listings with maximum number of nights > 1125
+count(NYC$maximum_nights>1125)
+```
+
+For maximum number of nights, Q3 and the median were equal at 1125; this indicates that any listings with maximum number of nights greater than 1125 is a strange occurance,so we removed listings greater than 1125. There are 95 listings with maximum number of nights greater than 1125.
+```{r, message=FALSE, warning=FALSE}
+#filter for listings with maximum_nights <= 1125
+NYC5 <- NYC4 %>% filter(maximum_nights <=1125)
+```
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~extra_people, data=NYC)
+boxplot(NYC$extra_people)
+#Number of listings that charge greater than $100 for extra people
+count(NYC$extra_people >100)
+```
+
+The minimum price for extra people is $0 and the maximum is $300. The Q1 is 0, median is 0, and Q3 is 20. There are zero missing data entries. For extra people, there were only 158 listings that costed more than 100 dollars; therefore, we filtered the data to not include those observations. 
+
+```{r, message=FALSE, warning=FALSE}
+#filter for listings with extra_people <= 100
+NYC6 <- NYC5 %>% filter(extra_people <=100)
+```
+
+```{r, message=FALSE, warning=FALSE}
+favstats(~price, data=NYC)
+boxplot(NYC$price)
+#Number of listings with prices greater than $500
+count(NYC$price > 500)
+```
+
+The minimum price is $10 and maximum price is $9999. The Q3 is $175 and mean is $149. There are zero missing data entries. The price of listings range from $10 to $10,000 and from looking at the boxplot we know there are many outliers for price. We were interested in telling the story that majority of the people would be interested in a renting a listing for $500 or less. We removed the 693 listings that were above $500.
+
+```{r, message=FALSE, warning=FALSE}
+#filter for listings for price <= 500
+NYC7 <- NYC6 %>% filter(price <=500)
+```
+
+After narrowing down our price to $500 a night and below, we see a more regular boxplot below which is less skewed. We get a minimum of $10/night, a maximum of $500/night, and a mean of $133/night.
+```{r, message=FALSE, warning=FALSE}
+favstats(~price, data = NYC7)
+boxplot(NYC7$price)
+```
+
+From this point forward, we will be using the NYC7 dataset to fit our models. We have divided our data into a training and testing data set; our model is fit on the training data and is used on the testing data to see the accuracy of our predictions.
+
+```{r, message=FALSE, warning=FALSE}
+#Creating a training and testing data set
+set.seed(1)
+NYC_train = NYC7 %>%
+  sample_frac(.5)
+NYC_test = NYC7 %>%
+  setdiff(NYC_train)
+```
+
+##Fitting the Model and Checking Conditions
+
+Initially, to model the price of listings in the data we ran stepwise regression and backwards eliminations using the 17 predictors ; however, both these algorithms selected 15 of these variables to be significant, making our model too complicated to interpret. As another approach, we used machine learning techniques such as a decision regression tree and boosting tree to build a predictive model for price. Our goal was build a model for predicting price from these two trees and translate the results in linear regression model.
+
+Therefore,  we used the training data to fit a decision regression tree based on the 17 predictors to predict price. This regression tree is chooses the predictors that have the greatest influence on price which were  room type, neighborhood, number of bedrooms, and number of bathrooms. 
+
+```{r, message=FALSE, warning=FALSE}
+##Fit Regression Decision Tree on training data using rpart
+tree_NYC=rpart(price~.,data=NYC_train)
+rpart.plot(tree_NYC)
+```
+
+To confirm that regression tree was selecting significant predictors, we also fit a boosting tree. The boosting tree makes its decisions based on relative influence of predictors on the response variable.  Below, we can see from the boosting tree that room type, neighborhood, number of bathrooms, and number of bedrooms have strongest influence on price.
+```{r, message=FALSE, warning=FALSE}
+# Fit boosting tree on training data
+set.seed(1)
+boost_NYC= gbm(price~., data = NYC_train, distribution = "gaussian", n.trees = 5000, interaction.depth = 4)
+summary(boost_NYC)
+```
+
+As the regression decision tree and boosting agree upon the same predictors being significant to predict price, we use these predictors to build our multiple linear regression model. We fit a multiple linear regression model for predicting price based on neighborhood, room type, and the number of bedrooms and bathrooms.
+
+```{r, message=FALSE, warning=FALSE}
+# Fit MLR model for predicting price using room_type, neighbourhood_group_cleansed, bedrooms, and bathrooms 
+reg_model1 <- lm(price ~ room_type + neighbourhood_group_cleansed + bedrooms + bathrooms, data = NYC_train)
+summary(reg_model1)
+```
+$\widehat{price} =  69.05 -  84.84\cdot roomtype_{Private room} - 108.98\cdot roomtype_{Shared room} + 11.59\cdot neighbourhood_{Brooklyn} + 55.36\cdot neighbourhood_{Manhattan} +3.53 \cdot neighbourhood_{Queens} - 12.17\cdot neighbourhood_{Staten Island} + 38.14 \cdot bedrooms + 29.51 \cdot bathrooms$
+
+Looking at the summary, we see that our model explains 51.44% of the variability in price. We performed an analysis of variance and checked the variance inflation factors to examine our model. Interestingly, for neighborhood, the predictor overall is significant. However, certain categories within it (Queens and Staten Island) have p-values above 0.05 and are therefore not significant.
+
+``` {r}
+anova(reg_model1)
+vif(reg_model1)
+```
+Our ANOVA output indicates that room type, neighborhood and the number of bedrooms and bathrooms have very large F-values of 7045, 471, 3823 and 456 respectively. Their p-values are smaller than 0.05; therefore, we can say that the predictors are all significant and we proceed with this model. The VIFs above are all smaller than 5. Therefore, we do not suspect multicollinearity and pursue with this model.
+
+``` {r}
+plot(reg_model1, which = 1)
+```   
+   
+We first check the residuals vs. fitted plot for linearity and equal variance. It shows the red trend line is pulling away from the zero line towards the right-hand side of the plot, indicating that we do not have an ideal fit for a linear model. We also see unequal band lengths which show that we fail to have equality of variance as the range changes from one side to the next. Finally, there are more points on the upper-hand side than the lower-hand side from the left to the right-hand side of the graph. From this graph and its residuals, we can see that we are overestimating the price for lower prices and underestimating for higher prices. 
+
+``` {r}
+plot(reg_model1, which = 2)
+```	
+   
+Next, we investigated whether the condition for normality was met. The normal Q-Q plot is  problematic. The points - especially at the tail ends - deviate greatly from the linear line. Therefore, we can conclude that normality is not met.
+   
+``` {r}
+plot(reg_model1, which = 4)
+``` 
+
+Finally, we check for influential outliers using the cook's distance graph. As all the points have cook's distance values below 0.05, this indicates that none of the observations have a significantly greater effect over another the linear regression model, which we would expect as we have already cleaned the data extensively and eliminated most outliers. 
+
+Based on the condition-checking above, we decided that our model was not a good fit for this data, as we were not able to meet the conditions for normality, equality of variance, and linearity. Thus we took the log of our response variable, price, and looked at a boxplot to see if we would have a more reasonable distribution.
+
+```{r, message=FALSE, warning=FALSE}
+boxplot(log(NYC7$price))
+```
+   
+After log transforming price we see that we still have outliers in our data, but fewer than before as our data is much more evenly distributed.  Therefore, we fit a multiple linear regression for predicting log(price) based on room type, neighborhood, and number of bedrooms and bathrooms. 
+
+```{r, message=FALSE, warning=FALSE}
+# Fit MLR model for predicting log(price) using room_type, neighbourhood_group_cleansed, bedrooms, and bathrooms 
+reg_model2 <- lm(log(price) ~ room_type + neighbourhood_group_cleansed + bedrooms + bathrooms, data = NYC_train)
+```
+
+We first checked the ANOVA and VIFs to see if our predictors are reasonable to model log(price). 
+```{r, message=FALSE, warning=FALSE}
+anova(reg_model2)
+vif(reg_model2)
+```
+We can see that room type, neighborhood, bedrooms and bathrooms have large F-values or 10804, 687, 2294, 128 respectively. All of their p-values are below 0.05 and statistically significant. Next, we checked for multicollinearity between the four variables by checking the VIF values. We can see that generally, the VIF values are around 1. Therefore, because they are all under 5, we can say that we do not have a problem with multicollinearity.
+
+Since our predictors were all statistically significant and our VIF values indicated that there was no multicollinearity,  we then considered linearity, independence, normality, and equality of variance, starting by examining a residuals vs. fitted plot.  
+
+```{r, message=FALSE, warning=FALSE}
+plot(reg_model2, which = 1)
+```
+   
+Overall, we see no obvious patterns in our data and the red trend line is generally along the zero line, which implies that a linear model is a good fit. The pattern of higher (generally positive) residuals for lower fitted values and lower (more negative) residuals for higher fitted values implies that we are overestimating the price for lower prices and underestimating for higher. However, the equal variance condition does not appear to be met. Most points seem to fit within a range of -2 to 2, but as the fitted values increase, the range becomes smaller.
+
+```{r, message=FALSE, warning=FALSE}
+plot(reg_model2, which = 2)
+```
+    
+Next, we checked for the normality condition for our model with log(price) as the response variable through looking at the Normal Q-Q plot. In our new plot, we can see that the dots are very far away from the dotted line, especially towards the right-hand side. We can see that the points are generally on the dotted line, especially in the middle portion (theoretical quantiles from -3 to 3). There is a deviation from the dotted line towards the tail ends and especially on the left-hand side where the three outliers are. Therefore, we say that the linear condition was not met and we are unable to say that it meets the normality condition. Normality was greatly improved - although still not ideal - but we decided to proceed with our model. In the graph below, we looked at Cook's distance and they are all are below 0.05, so we do not have any influential outliers.
+
+```{r, message=FALSE, warning=FALSE}
+plot(reg_model2, which = 4)
+```
+
+We also had to check for the condition for independence. As the listings data was split into the training and testing data sets, we can be assured that a random set of observations were used to fit the model. However, given that our data set is price listings made by people, we believe there may be a violation of the independence condition. For example, if new Airbnb users wanted to set a price for their Airbnb listing, they may look at other listings on the website to determine their optimal price. Therefore, we cannot say that the data points are independent. However, we continued with our original model noting this violation and again, proceeding with caution. 
+   
+Overall, we concluded that log transforming the response variable price improved our model. Before we performed the log transformation, the conditions for linearity and normality were not met. However, afterwards the condition for linearity was met although normality was not because it strays from the dotted line on both ends. Equality of variance was not met in either models so we proceed with caution. In both models, we saw no multicollinearity, no influential outliers, and all of the predictors were significant. 
+
+##Results
+We look at the summary of our model to look at the coefficients and form our linear model equation so that we can predict prices of listings with different characteristics.
+```{r, message=FALSE, warning=FALSE}
+summary(reg_model2)
+```
+Our equation for the final model becomes: 
+$\widehat{log(price)} =  4.44 - 0.69 \cdot roomtype_{Shared room} - 1.07 \cdot roomtype_{Private room} + 0.15 \cdot neighbourhood_{Brooklyn} + 0.46 \cdot neighbourhood_{Manhattan} + 0.07 \cdot neighbourhood_{Queens} - 0.07 \cdot neighbourhood_{Staten Island} + 0.2 \cdot bedrooms + 0.1 \cdot bathrooms$
+
+As we have predicted the log price, we need to take euler's number to the power of each beta value in order to find the price, which we have calculated in the table below:
+
+```{r, message=FALSE, warning=FALSE}
+table=read_csv("~/Smith/Fall2016/SDS291/airbnbtabledata2.csv")
+table
+```
+
+We can now interpret our model in terms of e to the power of the coefficients. Compared to renting out an entire house, we expect the price of a shared room to be multiplied by about a half, holding all else constant. For the price of a private room,  we only expect the price to go down by about a third, when we use the entire house as the reference group.  Using the Bronx as the reference group and holding all else constant, we can interpret the coefficients for all of the neighborhoods. We expect the price of a listing to be 16% higher in Brooklyn, the price of a listing in Manhattan to be 58%, and for the prices of listings in both Staten Island and Queens to be roughly the same, with Queens costing a little more and Staten Island costing a little less. For every additional bedroom, we expect price to up by 20%, whereas for every additional bathroom, we expect the price to increase by 10%. 
+
+The multiple linear regression model for predicting log(price) based on room type, neighborhood, number of bathrooms, and number of bedrooms explains 58.34% of the variability in log(price) within the training data. This $R^2$ value is an improvement over regression model using price as the response as this only accounts for 51% of the variability of the response variable in the training data.  
+
+We are most interested in how the regression model performs on the test data and its accuracy in predicting log(price). Thus, we applied the linear regression for predicting log(price) onto the test data.
+
+```{r,  message=FALSE, warning=FALSE}
+#Predict the reg_model2 on the test data
+predict_reg_model2 <- predict(reg_model2, newdata = NYC_test)
+
+#Residual vs Fitted Plot for Testing Data using reg_model2
+xyplot((log(price) - predict_reg_model2) ~ predict_reg_model2, data = NYC_train)
+
+#Calculate the R^2 for the test data having fit reg_model2
+ydif = log(NYC_test$price) - (mean(log(NYC_test$price), na.rm = TRUE))
+fitted = predict_reg_model2 
+SST = sum(ydif^2)
+SSE = sum((fitted - log(NYC_test$price))^2, na.rm = TRUE)
+SSM = sum((fitted - mean(log(NYC_test$price), na.rm = TRUE))^2, na.rm = TRUE)  
+rsq = 1-(SSE/SST)
+rsq
+```
+In our residuals vs. fitted plot above for our model on the testing data, we can see that we have a very similar graph to our residuals vs. fitted plot for our model on the training data. It also has the same pattern of the points with the slope, showing an overprediction for lower prices and an underprediction for higher prices. This may be due to several reasons, which are also applicable for the residuals vs. fitted plot for our training data. For example, as we go higher in price value, the number of data points decrease; therefore this may contribute to the smaller range. In addition, we may have created an upper bound by taking out our outliers during our data cleaning process. Therefore, taking out any expensive Airbnb listings (greater than $500) may have contributed to this formed pattern. Finally, there may be an unexplained factor that is present in the data that is accounting for this remaining variability. We must also take into consideration that this unexplained factor may not be present in our data (e.g. the number of plants in a house, which is not data that Airbnb collects) so we must remember that the data doesn't necessarily have the answers to all of our questions, and further research would be required to look into these problems. Despite some irregularity,  the residuals vs. fitted plot does indicate reasonable linearity. 
+
+58.79% of the variability in log(price) within the test data is explained by the multiple regression model using room type, neighborhood, number of bathrooms, and number of bedrooms as predictors. Although $R^2$ for the test data is slightly higher than the training, there is not enough evidence of our model overfitting so we can proceed with  using the model. 
+
+As the multiple linear regression model for predicting log(price) was built based upon the regression decision tree and boosting tree to predict price, we need a statistic to compare the performance of these three models.  We cannot directly compare how much error (e.g. Mean Square Error) was reduced between the linear regression model and the decision regression and boosting tree as the response variable is in different units. Thus, we use $R^2$ to compare how much of the variability in the response variable was explained by these models. 
+
+The regression decision tree model was predicted on the test and corresponding test $R^2$ was calculated.
+```{r, message=FALSE, warning=FALSE}
+#Predict Regression Decision Tree Model on the test data
+tree_pred = predict(tree_NYC, newdata = NYC_test)
+
+
+#Calculate the R^2 for test data using Regression Decision Tree Model
+ydif = NYC_test$price - mean(NYC_test$price)
+fitted = tree_pred 
+SST = sum(ydif^2)
+SSE = sum((fitted - NYC_test$price)^2)
+SSM = sum((fitted - mean(NYC_test$price))^2)  
+rsq = 1-(SSE/SST)
+rsq
+```    
+The regression decision tree explains 50.43% of the variability in price in the test data. This indicates that the regression tree actually explains less variability in the response variable within the test data than the linear regression model. Thus, our multiple linear regression model is more effective at predicting the response variable in comparison to the decision regression tree. 
+
+Similarly, the boosting  tree model was predicted on the test and corresponding test $R^2$ was calculated:
+```{r, message=FALSE, warning=FALSE}
+#Predict boosting tree model on the test data
+boost_pred = predict(boost_NYC, newdata = NYC_test, n.trees = 5000)
+
+
+#Calculate the R^2 for test data using boosting tree on test data
+ydif = NYC_test$price - mean(NYC_test$price)
+fitted = boost_pred 
+SST = sum(ydif^2)
+SSE = sum((fitted - NYC_test$price)^2)
+SSM = sum((fitted - mean(NYC_test$price))^2)  
+rsq = 1-(SSE/SST)
+rsq
+```
+The boosting tree explains 58.28% of the variability in price in the test data. This indicates that the boosting tree explains about the same variability in the response variable within the test data as the linear regression model. Thus, our linear regression model and boosting tree are more effective at predicting the response variable than the decision regression tree.
+
+## Predicting Price With Our Model
+
+We decided to predict Airbnb prices in all five boroughs that fit the criteria of a private room with one bathroom and one bedroom to see specific examples of how accurately our model predicts prices.
+
+Firstly, we look at a private room in Manhattan with 1 bedroom and 1 bathroom. We plug into our original equation to get log(price) = 4.51406.
+```{r, message=FALSE, warning=FALSE}
+4.441940+-0.688857+0.458333+1*0.200868+1*0.101776
+exp(4.51406)
+```
+Our predicted price would be $91.29. Now, looking at our data, we find listings that have the same criteria.
+ 
+```{r, message=FALSE, warning=FALSE}
+target1=NYC_test %>%
+  filter(neighbourhood_group_cleansed=="Manhattan") %>%
+  filter(room_type=="Private room") %>%
+  filter(bedrooms==1) %>%
+  filter(bathrooms==1)
+favstats(target1$price)
+```
+Based on the favstats() above, our actual test data ranges from $22 to $500 with a median of $90 and mean of about $101. Given that our prediction was about $91, we can say that our prediction is relatively good. It is very close to our median, and our mean is most likely heavily influenced by the higher prices (after all, our maximum price is $500) so it is better that our prediction is closer to the median than mean.
+ 
+In another instance, for a private room in Brooklyn with 1 bedrooms and 1 bathroom, we get log(price) = 4.203323.
+```{r, message=FALSE, warning=FALSE}
+4.441940+-0.688857+0.147596+1*0.200868+1*0.101776
+exp(4.203323)
+```
+Therefore, our predicted price would be $66.91. Now, again, we try to find listings that meet our criteria.
+ 
+```{r, message=FALSE, warning=FALSE}
+target2=NYC_test %>%
+  filter(neighbourhood_group_cleansed=="Brooklyn") %>%
+  filter(room_type=="Private room") %>%
+  filter(bedrooms==1) %>%
+  filter(bathrooms==1)
+favstats(target2$price)
+```
+Based on the favstats() above, our actual test data ranges from $10 to $500, with a median of $66 and mean of $73.22. Given that our predicted price was approximately $67, we can say that our prediction is relatively good because again, it is closer to the median than the mean which is most likely influenced by the $500 listings.
+ 
+ 
+Thirdly, for a private room in Bronx with 1 bedrooms and 1 bathroom, I get log(price) = 4.055727.
+```{r, message=FALSE, warning=FALSE}
+4.441940+-0.688857+0+1*0.200868+1*0.101776
+exp(4.055727)
+```
+Therefore, our predicted price would be $ 57.73. Now, again, we try to find listings that meets our criteria.
+ 
+```{r, message=FALSE, warning=FALSE}
+target3=NYC_test %>%
+  filter(neighbourhood_group_cleansed=="Bronx") %>%
+  filter(room_type=="Private room") %>%
+  filter(bedrooms==1) %>%
+  filter(bathrooms==1)
+favstats(target3$price)
+```
+Based on the favstats() above, our actual test data ranges from $20 to $223, with a median of $57.50 and mean of $65.29. Given that our predicted price was approximately $58, we can say that our prediction is relatively good. Again, it is very close to our median. Interestingly, this time the maximum price is $223 so there should not be as much of an influence on the mean, but our prediction is still closer to the median than it is to our mean.
+ 
+Fourthly, for a private room in Queens with 1 bedrooms and 1 bathroom, I get log(price) = 4.122742.
+```{r, message=FALSE, warning=FALSE}
+4.441940+-0.688857+ 0.067015+1*0.200868+1*0.101776
+exp(4.122742)
+```
+Therefore, our predicted price would be $ 61.73. Now, again, we try to find one that meets our standard.
+ 
+```{r, message=FALSE, warning=FALSE}
+target4=NYC_test %>%
+  filter(neighbourhood_group_cleansed=="Queens") %>%
+  filter(room_type=="Private room") %>%
+  filter(bedrooms==1) %>%
+  filter(bathrooms==1)
+favstats(target4$price)
+```
+Based on the favstats() above, our actual test data ranges from $12 to $450, with a median of $60 and a mean of $67.24. Given that our predicted price was approximately $62, we can say that our prediction is relatively good because it is very close to our median and relatively close to our mean. Also, again, there is a high chance that the mean is influenced by our higher prices such as $450.
+ 
+Finally, for a private room in Staten Island with 1 bedrooms and 1 bathroom, I get log(price) = 3.988587.
+```{r, message=FALSE, warning=FALSE}
+4.441940+-0.688857-0.067140+1*0.200868+1*0.101776
+exp(3.988587)
+```
+Therefore, our predicted price would be $ 53.98. Now, again, we try to find one that meets our standard.
+ 
+```{r, message=FALSE, warning=FALSE}
+target5=NYC_test %>%
+  filter(neighbourhood_group_cleansed=="Staten Island") %>%
+  filter(room_type=="Private room") %>%
+  filter(bedrooms==1) %>%
+  filter(bathrooms==1)
+favstats(target5$price)
+```
+Based on the favstats() above, our actual test data ranges from $23 to $300, with a median of $68.50 and a mean of $78.82. Given that our predicted price was approximately $54, we can say that our prediction is not as good as the rest of our predictions, as it greatly underestimates our prices in comparison to the median and mean. All of our other predictions for the other four boroughs were within about $10 of each other; however, for Staten Island's case, we can see that our prediction greatly underestimates the price and is very different from our median and mean. We suspect that this may be the case because of the insignificant p-value for Staten Island, specifically. Although in our summary statistics, we can see that neighbourhood is a significant predictor on its own (p-value = 2.2e-16), Staten Island individually is not statistically significant (p-value = 0.13751) whereas every other borough is (p-value < 0.05). This may be the reason why the predictions for this particular borough are not as good as the other instances.
+
+As we look at these prices from the example above, we must take into consideration that property type is not in our model. Therefore, the wide range of prices seen in the favstats() may be the result of the fact that a private room in a townhouse and a private room in an apartment (with one bathroom and bedroom each) are still in the same group. Therefore, we have some variability.
+
+##Conclusion 
+
+Using our final model derived from the predictors selected by the regression decision tree and boosting tree, we were able to create a model for which average price can be determined based on room type, neighborhood, number of bedrooms, and number of bathrooms. A potential limitation in our research is the small number of predictors we ultimately worked with.  There are more variables that could have been considered, both provided in Airbnb's dataset as well as outside of this framework. At the end of our research, we noticed that our residuals vs. fitted plot had variability still remaining which implied that there may have been an unexplained predictor we had not considered in our model. This could either be from variables we omitted when we came together as a team and selected the 17 that we deemed the most relevant, or it could be a result of our data cleaning. It is also a possibility that there were variables that Airbnb failed to consider, such as the number of plants in a listing, and that our research would benefit from further data collection. 
+
+##Future Works
+
+One way we could expand our research is by comparing our model with models for predicting prices of hotels and property rentals. For example, according to our model, we have determined that to charge the most for an Airbnb listing, one should choose to rent out an entire house in Manhattan with as many as eight bathrooms and ten bedrooms. If someone wanted to list at the cheapest possible price, they could rent out a shared room in Staten Island with as little as one bathroom (since we filtered out properties with zero bathrooms). However, if we were creating a model to determine how to charge the most for a hotel room, there might be different factors that would play into account. We hypothesize that neighborhood would also be a significant predictor in price but that number of bathrooms, for example, would not be, as a hotel room usually does not have more than one or two. If we were creating a model for how much to charge for an apartment per month, we would expect many of the same predictors but would be curious to see if others emerged as more significant, such as proximity to transit.
+
+
+
+
+## References
+
+We obtained the AirBnB Listings Data for New York City, compiled in 2015 , from: http://insideairbnb.com/get-the-data.html.
+
+Solomon, Brian. "How Airbnb Expanded To 190 Countries By Thinking 'Glocal'" Forbes. Forbes, 20 Dec. 2016. Web. 15 Nov. 2016. 
+
+
+
